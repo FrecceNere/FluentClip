@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=FluentClip
+Comment=Transparent Clipboard manager for Linux
+Exec=/usr/local/bin/fluentclip
+Icon=fluentclip
+Terminal=false
+Categories=Utility;
