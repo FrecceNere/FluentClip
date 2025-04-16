@@ -16,6 +16,7 @@ import json
 import time
 from datetime import datetime
 import tempfile
+import requests
 from PIL import Image
 import io
 import base64
@@ -34,6 +35,29 @@ try:
 except ImportError:
     XLIB_AVAILABLE = False
     print("python-xlib not available; global hotkey will be disabled")
+
+
+def check_for_updates(current_version):
+    url = "https://api.github.com/repos/FrecceNere/FluentClip/releases/latest"
+    try:
+        response = requests.get(url)
+        response.raise_for_status()  # Check if the request was successful
+        latest_release = response.json()
+        latest_version = latest_release['tag_name']  # Get the latest versionv
+
+        if latest_version != current_version:
+            notify_update(latest_version)
+    except Exception as e:
+        print(f"Error in checking for updates: {e}")
+
+def notify_update(latest_version):
+    notification = Notify.Notification.new(
+        "Update Avaible",
+        f"A new version is avaible: {latest_version}",
+        "dialog-information"
+    )
+    notification.show()
+
 
 class HotKeyManager:
     def __init__(self, callback):
@@ -186,6 +210,17 @@ class FluentClip(Gtk.Window):
         
         # Initialize tray icon
         self.setup_tray_icon()
+
+        # Version info (DON'T TOUCH!!)
+        current_version = "1.0.0"
+
+        # Update Checker (every 6 hours)
+        GLib.timeout_add(21600000, self.check_for_updates_periodically, current_version)
+
+
+    def check_for_updates_periodically(self, current_version):
+        check_for_updates(current_version)
+        return True
 
     def setup_window_properties(self):
         self.set_app_paintable(True)
@@ -1051,6 +1086,8 @@ def main():
     
     # Run main loop
     Gtk.main()
+
+
 
 if __name__ == "__main__":
     main()
