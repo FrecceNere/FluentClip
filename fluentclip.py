@@ -3,7 +3,7 @@ import gi
 gi.require_version('Gtk', '3.0')
 gi.require_version('Gdk', '3.0')
 gi.require_version('Notify', '0.7')
-from gi.repository import Gtk, Gdk, GdkPixbuf, GLib, Pango, GObject, Notify
+from gi.repository import Gtk, Gdk, GdkPixbuf, GLib, Pango, GObject, Notify, GdkX11
 import cairo
 import os
 import json
@@ -414,7 +414,26 @@ class FluentClip(Gtk.Window):
         self.show_all()
         self.present()
         self.is_visible = True
+        
+        # Request focus more aggressively
         self.grab_focus()
+        self.set_keep_above(True)
+        
+        # Use present_with_time for better focus handling
+        timestamp = Gtk.get_current_event_time()
+        if timestamp == 0:
+            timestamp = GdkX11.x11_get_server_time(self.get_window())
+        self.present_with_time(timestamp)
+        
+        # Set urgency hint to get user attention
+        self.set_urgency_hint(True)
+        
+        # Clear urgency hint after a short delay
+        GLib.timeout_add(1000, self.clear_urgency)
+
+    def clear_urgency(self):
+        self.set_urgency_hint(False)
+        return False  # Don't repeat
 
     def hide_window(self, widget=None):
         self.hide()
@@ -482,10 +501,49 @@ class FluentClip(Gtk.Window):
     def on_minimize(self, button):
         self.iconify()
     
+
+    def save_settings(self):
+        """Save settings to config file"""
+        config_dir = os.path.join(GLib.get_user_config_dir(), "fluentclip")
+        os.makedirs(config_dir, exist_ok=True)
+        settings_file = os.path.join(config_dir, "settings.json")
+        
+        settings = {
+            "max_history": self.max_history,
+            "blur_opacity": self.blur_opacity
+        }
+        
+        try:
+            with open(settings_file, 'w') as f:
+                json.dump(settings, f)
+        except Exception as e:
+            print(f"Error saving settings: {e}")
+
+    def load_settings(self):
+        """Load settings from config file"""
+        config_dir = os.path.join(GLib.get_user_config_dir(), "fluentclip")
+        settings_file = os.path.join(config_dir, "settings.json")
+        
+        if os.path.exists(settings_file):
+            try:
+                with open(settings_file, 'r') as f:
+                    settings = json.load(f)
+                    
+                    if "max_history" in settings:
+                        self.max_history = settings["max_history"]
+                    
+                    if "blur_opacity" in settings:
+                        self.blur_opacity = settings["blur_opacity"]
+                        # Update CSS with loaded opacity
+                        self.load_css()
+            except Exception as e:
+                print(f"Error loading settings: {e}") 
+
+
     def on_settings(self, button):
         dialog = Gtk.Dialog(title="Settings", parent=self, flags=0)
         dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
-                           Gtk.STOCK_OK, Gtk.ResponseType.OK)
+                            Gtk.STOCK_OK, Gtk.ResponseType.OK)
         dialog.set_default_size(350, 200)
         
         content_area = dialog.get_content_area()
@@ -545,6 +603,9 @@ class FluentClip(Gtk.Window):
             
             # Update CSS with new opacity
             self.load_css()
+            
+            # Save settings to file
+            self.save_settings()
             
         dialog.destroy()
     
@@ -827,15 +888,50 @@ class FluentClip(Gtk.Window):
 
 # DBus service for remote activation
 class FluentClipService(dbus.service.Object):
-    def __init__(self, app):
-        bus_name = dbus.service.BusName('org.fluentclip', bus=dbus.SessionBus())
-        dbus.service.Object.__init__(self, bus_name, '/org/fluentclip')
-        self.app = app
-    
-    @dbus.service.method('org.fluentclip')
-    def toggle(self):
-        self.app.toggle_window()
-        return True
+    def __init__(self):
+        Gtk.Window.__init__(self, title="FluentClip")
+        self.set_default_size(400, 500)
+        self.set_position(Gtk.WindowPosition.CENTER)
+        self.set_border_width(0)
+        
+        # Initialize notify
+        Notify.init("FluentClip")
+        
+        # Settings with defaults
+        self.max_history = 30
+        self.blur_opacity = 0.85
+        self.current_content = ""
+        self.history = []
+        self.begin_drag = False
+        self.is_visible = False
+        
+        # Load settings before building UI
+        self.load_settings()
+        
+        # Setup window properties for blur effect
+        self.setup_window_properties()
+        
+        # Main layout
+        self.build_ui()
+        
+        # Setup styles
+        self.load_css()
+        
+        # Load history
+        self.load_history()
+        
+        # Setup clipboard monitoring
+        self.clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+        GLib.timeout_add(500, self.check_clipboard)
+        
+        # Setup global hotkey
+        self.setup_hotkey()
+        
+        # Focus handling for auto-hide
+        self.connect("focus-out-event", self.on_focus_out)
+        
+        # Initialize tray icon
+        self.setup_tray_icon()
 
 def setup_blur(window):
     """Setup blur effect using available compositors"""
