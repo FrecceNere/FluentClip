@@ -3,7 +3,13 @@ import gi
 gi.require_version('Gtk', '3.0')
 gi.require_version('Gdk', '3.0')
 gi.require_version('Notify', '0.7')
-from gi.repository import Gtk, Gdk, GdkPixbuf, GLib, Pango, GObject, Notify, GdkX11
+from gi.repository import Gtk, Gdk, GdkPixbuf, GLib, Pango, GObject, Notify
+try:
+    from gi.repository import GdkX11
+    GDKX11_AVAILABLE = True
+except ImportError:
+    GDKX11_AVAILABLE = False
+    print("GdkX11 not available; advanced focus handling will be limited")
 import cairo
 import os
 import json
@@ -888,50 +894,15 @@ class FluentClip(Gtk.Window):
 
 # DBus service for remote activation
 class FluentClipService(dbus.service.Object):
-    def __init__(self):
-        Gtk.Window.__init__(self, title="FluentClip")
-        self.set_default_size(400, 500)
-        self.set_position(Gtk.WindowPosition.CENTER)
-        self.set_border_width(0)
-        
-        # Initialize notify
-        Notify.init("FluentClip")
-        
-        # Settings with defaults
-        self.max_history = 30
-        self.blur_opacity = 0.85
-        self.current_content = ""
-        self.history = []
-        self.begin_drag = False
-        self.is_visible = False
-        
-        # Load settings before building UI
-        self.load_settings()
-        
-        # Setup window properties for blur effect
-        self.setup_window_properties()
-        
-        # Main layout
-        self.build_ui()
-        
-        # Setup styles
-        self.load_css()
-        
-        # Load history
-        self.load_history()
-        
-        # Setup clipboard monitoring
-        self.clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
-        GLib.timeout_add(500, self.check_clipboard)
-        
-        # Setup global hotkey
-        self.setup_hotkey()
-        
-        # Focus handling for auto-hide
-        self.connect("focus-out-event", self.on_focus_out)
-        
-        # Initialize tray icon
-        self.setup_tray_icon()
+    def __init__(self, app):
+        bus_name = dbus.service.BusName('org.fluentclip', bus=dbus.SessionBus())
+        dbus.service.Object.__init__(self, bus_name, '/org/fluentclip')
+        self.app = app
+    
+    @dbus.service.method('org.fluentclip')
+    def toggle(self):
+        self.app.toggle_window()
+        return True
 
 def setup_blur(window):
     """Setup blur effect using available compositors"""
