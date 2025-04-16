@@ -150,14 +150,12 @@ class ClipboardItem:
         self.timestamp = timestamp or datetime.now()
         self.type = item_type
         self.image_data = image_data
-        self.pinned = False
 
     def to_dict(self):
         data = {
             "content": self.content,
             "timestamp": self.timestamp.isoformat(),
-            "type": self.type,
-            "pinned": self.pinned
+            "type": self.type
         }
         if self.image_data:
             data["image_data"] = self.image_data
@@ -168,8 +166,6 @@ class ClipboardItem:
         item = ClipboardItem(data["content"], datetime.fromisoformat(data["timestamp"]), data["type"])
         if "image_data" in data:
             item.image_data = data["image_data"]
-        if "pinned" in data:
-            item.pinned = data["pinned"]
         return item
 
 class FluentClip(Gtk.Window):
@@ -739,9 +735,6 @@ class FluentClip(Gtk.Window):
             self.save_history()
     
     def refresh_list(self):
-        # Sort the items: fixed at the top, then by timestamp
-        self.history.sort(key=lambda x: (not x.pinned, -time.mktime(x.timestamp.timetuple())))
-
         # Update entire list
         for child in self.listbox.get_children():
             self.listbox.remove(child)
@@ -759,24 +752,6 @@ class FluentClip(Gtk.Window):
         box.set_margin_bottom(2)
         box.get_style_context().add_class("clip-item")
         
-        button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-        button_box.set_halign(Gtk.Align.END)
-        
-        pin_btn = Gtk.Button()
-        pin_btn.set_relief(Gtk.ReliefStyle.NONE)
-        pin_btn.set_size_request(24, 24)
-        
-        if item.pinned:
-            pin_image = Gtk.Image.new_from_icon_name("pin-down", Gtk.IconSize.SMALL_TOOLBAR)
-        else:
-            pin_image = Gtk.Image.new_from_icon_name("pin-up", Gtk.IconSize.SMALL_TOOLBAR)
-        
-        pin_btn.add(pin_image)
-        pin_btn.connect("clicked", self.on_pin_clicked, row)
-        
-        button_box.pack_end(pin_btn, False, False, 0)
-        box.pack_start(button_box, False, False, 0)
-
         if item.type == "text":
             # Text content
             content = item.content
@@ -835,39 +810,6 @@ class FluentClip(Gtk.Window):
         row.item = item  # Store item reference
         self.listbox.add(row)
     
-    def on_pin_clicked(self, button, row):
-        item = row.item
-        item.pinned = not item.pinned
-        
-        # Reorganize the list
-        self.history.remove(item)
-        
-        # Fixed elements go on top
-        if item.pinned:
-            # Finds the position after the last fixed element
-            pin_pos = 0
-            for i, hist_item in enumerate(self.history):
-                if hist_item.pinned:
-                    pin_pos = i + 1
-                else:
-                    break
-            
-            self.history.insert(pin_pos, item)
-        else:
-            # Insert based on timestamp for unfixed items
-            timestamp_pos = 0
-            for i, hist_item in enumerate(self.history):
-                if not hist_item.pinned and hist_item.timestamp > item.timestamp:
-                    timestamp_pos = i
-                    break
-                elif not hist_item.pinned:
-                    timestamp_pos = i + 1
-            
-            self.history.insert(timestamp_pos, item)
-        
-        self.refresh_list()
-        self.save_history()
-
     def on_item_clicked(self, listbox, row):
         if row and hasattr(row, 'item'):
             item = row.item
