@@ -1,5 +1,6 @@
 # FluentClip
 Transparent Clipboard Manager for Linux!
+
 ![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/FrecceNere/FluentClip/total)
 
 # Tested Platforms
