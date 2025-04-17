@@ -12,6 +12,7 @@ except ImportError:
     print("GdkX11 not available; advanced focus handling will be limited")
 import cairo
 import os
+import re
 import json
 import time
 from datetime import datetime
@@ -57,6 +58,35 @@ def notify_update(latest_version):
         "dialog-information"
     )
     notification.show()
+
+
+def detect_content_type(text):
+    """Detect the type of content in the text"""
+    # Check if it's a URL
+    url_pattern = r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+'
+    if re.match(url_pattern, text.strip()):
+        return "url"
+    
+    # Check if it's HTML
+    if re.search(r'<[^>]+>', text):
+        return "html"
+    
+    # Check if it's JSON
+    try:
+        json.loads(text)
+        return "json"
+    except:
+        pass
+    
+    # Check if it's code (basic detection)
+    code_indicators = [
+        'def ', 'class ', 'function', 'var ', 'let ', 'const ',
+        'import ', 'from ', '#include', 'package '
+    ]
+    if any(indicator in text for indicator in code_indicators):
+        return "code"
+    
+    return "text"
 
 
 class HotKeyManager:
@@ -394,6 +424,30 @@ class FluentClip(Gtk.Window):
         .image-preview {{
             border-radius: 4px;
             background-color: rgb(60, 60, 60);  /* Solid background for image preview */
+        }}
+        
+        .url-content {{
+            color: #3584e4;
+            font-size: 14px;
+        }}
+        
+        .html-content {{
+            font-family: sans-serif;
+            font-size: 14px;
+        }}
+        
+        .code-content {{
+            font-family: monospace;
+            font-size: 13px;
+            background-color: rgba(0, 0, 0, 0.2);
+            padding: 8px;
+            border-radius: 4px;
+        }}
+        
+        .type-indicator {{
+            color: #99c1f1;
+            font-size: 11px;
+            margin-top: 4px;
         }}
         """
         css_provider.load_from_data(css.encode())
@@ -753,17 +807,54 @@ class FluentClip(Gtk.Window):
         box.get_style_context().add_class("clip-item")
         
         if item.type == "text":
-            # Text content
+            # Detect content type
+            content_type = detect_content_type(item.content)
             content = item.content
-            if len(content) > 100:
-                content = content[:97] + "..."
             
-            label = Gtk.Label(label=content)
+            if content_type == "url":
+                # Create URL label with link
+                label = Gtk.LinkButton.new_with_label(content, content[:100] + "..." if len(content) > 100 else content)
+                label.get_style_context().add_class("url-content")
+            
+            elif content_type == "html":
+                # Show formatted HTML preview
+                label = Gtk.Label()
+                label.set_markup(content[:200] + "..." if len(content) > 200 else content)
+                label.set_line_wrap(True)
+                label.get_style_context().add_class("html-content")
+            
+            elif content_type == "json":
+                # Show formatted JSON
+                try:
+                    formatted_json = json.dumps(json.loads(content), indent=2)
+                    label = Gtk.Label(label=formatted_json[:200] + "..." if len(formatted_json) > 200 else formatted_json)
+                    label.get_style_context().add_class("code-content")
+                except:
+                    label = Gtk.Label(label=content)
+            
+            elif content_type == "code":
+                # Show code with monospace font
+                label = Gtk.Label(label=content[:200] + "..." if len(content) > 200 else content)
+                label.get_style_context().add_class("code-content")
+            
+            else:
+                # Regular text
+                label = Gtk.Label(label=content[:100] + "..." if len(content) > 100 else content)
+            
             label.set_line_wrap(True)
             label.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
             label.set_xalign(0)
             label.set_max_width_chars(50)
             box.pack_start(label, True, True, 0)
+            
+            # Add content type indicator
+            if content_type != "text":
+                type_label = Gtk.Label()
+                type_label.set_markup(f"<small>{content_type.upper()}</small>")
+                type_label.get_style_context().add_class("type-indicator")
+                type_label.set_xalign(0)
+                box.pack_start(type_label, False, False, 0)
+        
         elif item.type == "image":
             # Image content
             try:
