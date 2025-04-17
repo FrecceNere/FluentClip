@@ -242,7 +242,7 @@ class FluentClip(Gtk.Window):
         self.setup_tray_icon()
 
         # Version info (DON'T TOUCH!!)
-        current_version = "1.0.0"
+        current_version = "1.0.1"
 
         # Update Checker (every 6 hours)
         GLib.timeout_add(21600000, self.check_for_updates_periodically, current_version)
