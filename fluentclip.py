@@ -807,53 +807,73 @@ class FluentClip(Gtk.Window):
         box.get_style_context().add_class("clip-item")
         
         if item.type == "text":
-            # Detect content type
             content_type = detect_content_type(item.content)
             content = item.content
             
             if content_type == "url":
-                # Create URL label with link
-                label = Gtk.LinkButton.new_with_label(content, content[:100] + "..." if len(content) > 100 else content)
+                # Create URL container
+                url_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+                
+                # Create URL icon
+                icon = Gtk.Image.new_from_icon_name("web-browser", Gtk.IconSize.MENU)
+                url_box.pack_start(icon, False, False, 4)
+                
+                # Create URL label
+                truncated_url = content[:100] + "..." if len(content) > 100 else content
+                label = Gtk.Label(label=truncated_url)
+                label.set_line_wrap(True)
+                label.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
+                label.set_xalign(0)
+                label.set_max_width_chars(50)
                 label.get_style_context().add_class("url-content")
-            
+                url_box.pack_start(label, True, True, 0)
+                
+                box.pack_start(url_box, True, True, 0)
+                
             elif content_type == "html":
                 # Show formatted HTML preview
                 label = Gtk.Label()
                 label.set_markup(content[:200] + "..." if len(content) > 200 else content)
                 label.set_line_wrap(True)
+                label.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
+                label.set_xalign(0)
                 label.get_style_context().add_class("html-content")
-            
+                box.pack_start(label, True, True, 0)
+                
             elif content_type == "json":
                 # Show formatted JSON
                 try:
                     formatted_json = json.dumps(json.loads(content), indent=2)
                     label = Gtk.Label(label=formatted_json[:200] + "..." if len(formatted_json) > 200 else formatted_json)
+                    label.set_line_wrap(True)
+                    label.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
+                    label.set_xalign(0)
                     label.get_style_context().add_class("code-content")
+                    box.pack_start(label, True, True, 0)
                 except:
                     label = Gtk.Label(label=content)
+                    label.set_line_wrap(True)
+                    label.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
+                    label.set_xalign(0)
+                    box.pack_start(label, True, True, 0)
             
             elif content_type == "code":
                 # Show code with monospace font
                 label = Gtk.Label(label=content[:200] + "..." if len(content) > 200 else content)
+                label.set_line_wrap(True)
+                label.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
+                label.set_xalign(0)
                 label.get_style_context().add_class("code-content")
+                box.pack_start(label, True, True, 0)
             
             else:
                 # Regular text
                 label = Gtk.Label(label=content[:100] + "..." if len(content) > 100 else content)
-            
-            label.set_line_wrap(True)
-            label.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
-            label.set_xalign(0)
-            label.set_max_width_chars(50)
-            box.pack_start(label, True, True, 0)
-            
-            # Add content type indicator
-            if content_type != "text":
-                type_label = Gtk.Label()
-                type_label.set_markup(f"<small>{content_type.upper()}</small>")
-                type_label.get_style_context().add_class("type-indicator")
-                type_label.set_xalign(0)
-                box.pack_start(type_label, False, False, 0)
+                label.set_line_wrap(True)
+                label.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
+                label.set_xalign(0)
+                label.set_max_width_chars(50)
+                box.pack_start(label, True, True, 0)
         
         elif item.type == "image":
             # Image content
