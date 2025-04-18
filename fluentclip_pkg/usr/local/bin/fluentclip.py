@@ -12,10 +12,12 @@ except ImportError:
     print("GdkX11 not available; advanced focus handling will be limited")
 import cairo
 import os
+import re
 import json
 import time
 from datetime import datetime
 import tempfile
+import requests
 from PIL import Image
 import io
 import base64
@@ -34,6 +36,58 @@ try:
 except ImportError:
     XLIB_AVAILABLE = False
     print("python-xlib not available; global hotkey will be disabled")
+
+
+def check_for_updates(current_version):
+    url = "https://api.github.com/repos/FrecceNere/FluentClip/releases/latest"
+    try:
+        response = requests.get(url)
+        response.raise_for_status()  # Check if the request was successful
+        latest_release = response.json()
+        latest_version = latest_release['tag_name']  # Get the latest versionv
+
+        if latest_version != current_version:
+            notify_update(latest_version)
+    except Exception as e:
+        print(f"Error in checking for updates: {e}")
+
+def notify_update(latest_version):
+    notification = Notify.Notification.new(
+        "Update Avaible",
+        f"A new version is avaible: {latest_version}",
+        "dialog-information"
+    )
+    notification.show()
+
+
+def detect_content_type(text):
+    """Detect the type of content in the text"""
+    # Check if it's a URL
+    url_pattern = r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+'
+    if re.match(url_pattern, text.strip()):
+        return "url"
+    
+    # Check if it's HTML
+    if re.search(r'<[^>]+>', text):
+        return "html"
+    
+    # Check if it's JSON
+    try:
+        json.loads(text)
+        return "json"
+    except:
+        pass
+    
+    # Check if it's code (basic detection)
+    code_indicators = [
+        'def ', 'class ', 'function', 'var ', 'let ', 'const ',
+        'import ', 'from ', '#include', 'package '
+    ]
+    if any(indicator in text for indicator in code_indicators):
+        return "code"
+    
+    return "text"
+
 
 class HotKeyManager:
     def __init__(self, callback):
@@ -126,6 +180,13 @@ class ClipboardItem:
         self.timestamp = timestamp or datetime.now()
         self.type = item_type
         self.image_data = image_data
+        self._hash = hash((content, item_type))  # Cache hash
+    
+    def __eq__(self, other):
+        return self._hash == other._hash
+
+    def __hash__(self):
+        return self._hash
 
     def to_dict(self):
         data = {
@@ -161,6 +222,7 @@ class FluentClip(Gtk.Window):
         self.history = []
         self.begin_drag = False
         self.is_visible = False
+        self._preview_cache = {}  # Cache for image previews
         
         # Setup window properties for blur effect
         self.setup_window_properties()
@@ -186,6 +248,17 @@ class FluentClip(Gtk.Window):
         
         # Initialize tray icon
         self.setup_tray_icon()
+
+        # Version info (DON'T TOUCH!!)
+        current_version = "1.0.1"
+
+        # Update Checker (every 6 hours)
+        GLib.timeout_add(21600000, self.check_for_updates_periodically, current_version)
+
+
+    def check_for_updates_periodically(self, current_version):
+        check_for_updates(current_version)
+        return True
 
     def setup_window_properties(self):
         self.set_app_paintable(True)
@@ -359,6 +432,30 @@ class FluentClip(Gtk.Window):
         .image-preview {{
             border-radius: 4px;
             background-color: rgb(60, 60, 60);  /* Solid background for image preview */
+        }}
+        
+        .url-content {{
+            color: #3584e4;
+            font-size: 14px;
+        }}
+        
+        .html-content {{
+            font-family: sans-serif;
+            font-size: 14px;
+        }}
+        
+        .code-content {{
+            font-family: monospace;
+            font-size: 13px;
+            background-color: rgba(0, 0, 0, 0.2);
+            padding: 8px;
+            border-radius: 4px;
+        }}
+        
+        .type-indicator {{
+            color: #99c1f1;
+            font-size: 11px;
+            margin-top: 4px;
         }}
         """
         css_provider.load_from_data(css.encode())
@@ -618,30 +715,36 @@ class FluentClip(Gtk.Window):
     def on_search_changed(self, entry):
         search_text = entry.get_text().lower()
         
-        # Clear and recreate list based on search
-        for child in self.listbox.get_children():
-            self.listbox.remove(child)
-        
-        for item in self.history:
-            if item.type == "text" and search_text in item.content.lower():
-                self.add_item_to_list(item)
-            elif item.type == "image" and search_text in item.content.lower():
-                self.add_item_to_list(item)
+        # Hide/show rows instead of rebuilding
+        for row in self.listbox.get_children():
+            item = row.item
+            visible = False
+            
+            if item.type == "text":
+                visible = search_text in item.content.lower()
+            elif item.type == "image":
+                visible = search_text in item.content.lower()
                 
-        self.listbox.show_all()
+            row.set_visible(visible)
     
     def check_clipboard(self):
-        # Check for text
-        text = self.clipboard.wait_for_text()
-        if text and text != self.current_content and text.strip():
-            self.process_clipboard_text(text)
-            return True
+        try:
+            text = self.clipboard.wait_for_text()
+            if text and text.strip():
+                text_hash = hash(text)
+                if text_hash != getattr(self, '_last_text_hash', None):
+                    self._last_text_hash = text_hash
+                    self.process_clipboard_text(text)
             
-        # Check for image
-        pixbuf = self.clipboard.wait_for_image()
-        if pixbuf:
-            self.process_clipboard_image(pixbuf)
-            
+            pixbuf = self.clipboard.wait_for_image()
+            if pixbuf:
+                image_hash = hash(pixbuf.get_pixels())
+                if image_hash != getattr(self, '_last_image_hash', None):
+                    self._last_image_hash = image_hash
+                    self.process_clipboard_image(pixbuf)
+        except Exception as e:
+            print(f"Clipboard check error: {e}")
+        
         return True
     
     def process_clipboard_text(self, text):
@@ -718,49 +821,83 @@ class FluentClip(Gtk.Window):
         box.get_style_context().add_class("clip-item")
         
         if item.type == "text":
-            # Text content
+            content_type = detect_content_type(item.content)
             content = item.content
-            if len(content) > 100:
-                content = content[:97] + "..."
             
-            label = Gtk.Label(label=content)
-            label.set_line_wrap(True)
-            label.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
-            label.set_xalign(0)
-            label.set_max_width_chars(50)
-            box.pack_start(label, True, True, 0)
-        elif item.type == "image":
-            # Image content
-            try:
-                image_data = base64.b64decode(item.image_data)
-                loader = GdkPixbuf.PixbufLoader()
-                loader.write(image_data)
-                loader.close()
-                pixbuf = loader.get_pixbuf()
+            if content_type == "url":
+                # Create URL container
+                url_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
                 
-                # Scale image preview
-                width = pixbuf.get_width()
-                height = pixbuf.get_height()
+                # Create URL icon
+                icon = Gtk.Image.new_from_icon_name("web-browser", Gtk.IconSize.MENU)
+                url_box.pack_start(icon, False, False, 4)
                 
-                if width > 300:
-                    scale_factor = 300 / width
-                    new_width = 300
-                    new_height = int(height * scale_factor)
-                    pixbuf = pixbuf.scale_simple(new_width, new_height, GdkPixbuf.InterpType.BILINEAR)
-                
-                image = Gtk.Image.new_from_pixbuf(pixbuf)
-                image.get_style_context().add_class("image-preview")
-                box.pack_start(image, True, True, 0)
-                
-                # Add image label
-                img_label = Gtk.Label(label="Image")
-                img_label.set_xalign(0)
-                box.pack_start(img_label, False, False, 0)
-            except Exception as e:
-                print(f"Error loading image preview: {e}")
-                label = Gtk.Label(label="[Image - preview unavailable]")
+                # Create URL label
+                truncated_url = content[:100] + "..." if len(content) > 100 else content
+                label = Gtk.Label(label=truncated_url)
+                label.set_line_wrap(True)
+                label.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
                 label.set_xalign(0)
+                label.set_max_width_chars(50)
+                label.get_style_context().add_class("url-content")
+                url_box.pack_start(label, True, True, 0)
+                
+                box.pack_start(url_box, True, True, 0)
+                
+            elif content_type == "html":
+                # Show formatted HTML preview
+                label = Gtk.Label()
+                label.set_markup(content[:200] + "..." if len(content) > 200 else content)
+                label.set_line_wrap(True)
+                label.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
+                label.set_xalign(0)
+                label.get_style_context().add_class("html-content")
                 box.pack_start(label, True, True, 0)
+                
+            elif content_type == "json":
+                # Show formatted JSON
+                try:
+                    formatted_json = json.dumps(json.loads(content), indent=2)
+                    label = Gtk.Label(label=formatted_json[:200] + "..." if len(formatted_json) > 200 else formatted_json)
+                    label.set_line_wrap(True)
+                    label.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
+                    label.set_xalign(0)
+                    label.get_style_context().add_class("code-content")
+                    box.pack_start(label, True, True, 0)
+                except:
+                    label = Gtk.Label(label=content)
+                    label.set_line_wrap(True)
+                    label.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
+                    label.set_xalign(0)
+                    box.pack_start(label, True, True, 0)
+            
+            elif content_type == "code":
+                # Show code with monospace font
+                label = Gtk.Label(label=content[:200] + "..." if len(content) > 200 else content)
+                label.set_line_wrap(True)
+                label.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
+                label.set_xalign(0)
+                label.get_style_context().add_class("code-content")
+                box.pack_start(label, True, True, 0)
+            
+            else:
+                # Regular text
+                label = Gtk.Label(label=content[:100] + "..." if len(content) > 100 else content)
+                label.set_line_wrap(True)
+                label.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
+                label.set_xalign(0)
+                label.set_max_width_chars(50)
+                box.pack_start(label, True, True, 0)
+        
+        elif item.type == "image":
+            # Create placeholder first
+            image_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            placeholder = Gtk.Label(label="Loading image...")
+            image_box.pack_start(placeholder, True, True, 0)
+            box.pack_start(image_box, True, True, 0)
+            
+            # Load image in background
+            GLib.idle_add(self._load_image_preview, item.image_data, image_box)
         
         # Timestamp
         time_str = item.timestamp.strftime("%d/%m/%Y %H:%M")
@@ -775,6 +912,48 @@ class FluentClip(Gtk.Window):
         row.item = item  # Store item reference
         self.listbox.add(row)
     
+    def _load_image_preview(self, image_data, container):
+        try:
+            pixbuf = self._create_image_preview(image_data)
+            image = Gtk.Image.new_from_pixbuf(pixbuf)
+            image.get_style_context().add_class("image-preview")
+            
+            # Remove placeholder and add image
+            for child in container.get_children():
+                container.remove(child)
+            container.pack_start(image, True, True, 0)
+            container.show_all()
+        except Exception as e:
+            print(f"Error loading image preview: {e}")
+    
+    def _create_image_preview(self, image_data):
+        # Check cache first
+        if image_data in self._preview_cache:
+            return self._preview_cache[image_data]
+            
+        # Create preview
+        loader = GdkPixbuf.PixbufLoader()
+        loader.write(base64.b64decode(image_data))
+        loader.close()
+        pixbuf = loader.get_pixbuf()
+        
+        # Scale if needed
+        if pixbuf.get_width() > 300:
+            scale_factor = 300 / pixbuf.get_width()
+            new_width = 300
+            new_height = int(pixbuf.get_height() * scale_factor)
+            pixbuf = pixbuf.scale_simple(new_width, new_height, 
+                                       GdkPixbuf.InterpType.BILINEAR)
+        
+        # Cache and return
+        self._preview_cache[image_data] = pixbuf
+        return pixbuf
+
+    def clear_cache(self):
+        """Clear image preview cache when memory usage is high"""
+        if len(self._preview_cache) > 50:  # Arbitrary limit
+            self._preview_cache.clear()
+
     def on_item_clicked(self, listbox, row):
         if row and hasattr(row, 'item'):
             item = row.item
@@ -1051,6 +1230,8 @@ def main():
     
     # Run main loop
     Gtk.main()
+
+
 
 if __name__ == "__main__":
     main()
