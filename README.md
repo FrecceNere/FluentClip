@@ -1,3 +1,4 @@
+![image](image_clipboard.png)
 # FluentClip
 Transparent Clipboard Manager for Linux!
 
