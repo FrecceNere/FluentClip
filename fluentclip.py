@@ -180,6 +180,13 @@ class ClipboardItem:
         self.timestamp = timestamp or datetime.now()
         self.type = item_type
         self.image_data = image_data
+        self._hash = hash((content, item_type))  # Cache hash
+    
+    def __eq__(self, other):
+        return self._hash == other._hash
+
+    def __hash__(self):
+        return self._hash
 
     def to_dict(self):
         data = {
@@ -215,6 +222,7 @@ class FluentClip(Gtk.Window):
         self.history = []
         self.begin_drag = False
         self.is_visible = False
+        self._preview_cache = {}  # Cache for image previews
         
         # Setup window properties for blur effect
         self.setup_window_properties()
@@ -707,30 +715,36 @@ class FluentClip(Gtk.Window):
     def on_search_changed(self, entry):
         search_text = entry.get_text().lower()
         
-        # Clear and recreate list based on search
-        for child in self.listbox.get_children():
-            self.listbox.remove(child)
-        
-        for item in self.history:
-            if item.type == "text" and search_text in item.content.lower():
-                self.add_item_to_list(item)
-            elif item.type == "image" and search_text in item.content.lower():
-                self.add_item_to_list(item)
+        # Hide/show rows instead of rebuilding
+        for row in self.listbox.get_children():
+            item = row.item
+            visible = False
+            
+            if item.type == "text":
+                visible = search_text in item.content.lower()
+            elif item.type == "image":
+                visible = search_text in item.content.lower()
                 
-        self.listbox.show_all()
+            row.set_visible(visible)
     
     def check_clipboard(self):
-        # Check for text
-        text = self.clipboard.wait_for_text()
-        if text and text != self.current_content and text.strip():
-            self.process_clipboard_text(text)
-            return True
+        try:
+            text = self.clipboard.wait_for_text()
+            if text and text.strip():
+                text_hash = hash(text)
+                if text_hash != getattr(self, '_last_text_hash', None):
+                    self._last_text_hash = text_hash
+                    self.process_clipboard_text(text)
             
-        # Check for image
-        pixbuf = self.clipboard.wait_for_image()
-        if pixbuf:
-            self.process_clipboard_image(pixbuf)
-            
+            pixbuf = self.clipboard.wait_for_image()
+            if pixbuf:
+                image_hash = hash(pixbuf.get_pixels())
+                if image_hash != getattr(self, '_last_image_hash', None):
+                    self._last_image_hash = image_hash
+                    self.process_clipboard_image(pixbuf)
+        except Exception as e:
+            print(f"Clipboard check error: {e}")
+        
         return True
     
     def process_clipboard_text(self, text):
@@ -876,37 +890,14 @@ class FluentClip(Gtk.Window):
                 box.pack_start(label, True, True, 0)
         
         elif item.type == "image":
-            # Image content
-            try:
-                image_data = base64.b64decode(item.image_data)
-                loader = GdkPixbuf.PixbufLoader()
-                loader.write(image_data)
-                loader.close()
-                pixbuf = loader.get_pixbuf()
-                
-                # Scale image preview
-                width = pixbuf.get_width()
-                height = pixbuf.get_height()
-                
-                if width > 300:
-                    scale_factor = 300 / width
-                    new_width = 300
-                    new_height = int(height * scale_factor)
-                    pixbuf = pixbuf.scale_simple(new_width, new_height, GdkPixbuf.InterpType.BILINEAR)
-                
-                image = Gtk.Image.new_from_pixbuf(pixbuf)
-                image.get_style_context().add_class("image-preview")
-                box.pack_start(image, True, True, 0)
-                
-                # Add image label
-                img_label = Gtk.Label(label="Image")
-                img_label.set_xalign(0)
-                box.pack_start(img_label, False, False, 0)
-            except Exception as e:
-                print(f"Error loading image preview: {e}")
-                label = Gtk.Label(label="[Image - preview unavailable]")
-                label.set_xalign(0)
-                box.pack_start(label, True, True, 0)
+            # Create placeholder first
+            image_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            placeholder = Gtk.Label(label="Loading image...")
+            image_box.pack_start(placeholder, True, True, 0)
+            box.pack_start(image_box, True, True, 0)
+            
+            # Load image in background
+            GLib.idle_add(self._load_image_preview, item.image_data, image_box)
         
         # Timestamp
         time_str = item.timestamp.strftime("%d/%m/%Y %H:%M")
@@ -921,6 +912,48 @@ class FluentClip(Gtk.Window):
         row.item = item  # Store item reference
         self.listbox.add(row)
     
+    def _load_image_preview(self, image_data, container):
+        try:
+            pixbuf = self._create_image_preview(image_data)
+            image = Gtk.Image.new_from_pixbuf(pixbuf)
+            image.get_style_context().add_class("image-preview")
+            
+            # Remove placeholder and add image
+            for child in container.get_children():
+                container.remove(child)
+            container.pack_start(image, True, True, 0)
+            container.show_all()
+        except Exception as e:
+            print(f"Error loading image preview: {e}")
+    
+    def _create_image_preview(self, image_data):
+        # Check cache first
+        if image_data in self._preview_cache:
+            return self._preview_cache[image_data]
+            
+        # Create preview
+        loader = GdkPixbuf.PixbufLoader()
+        loader.write(base64.b64decode(image_data))
+        loader.close()
+        pixbuf = loader.get_pixbuf()
+        
+        # Scale if needed
+        if pixbuf.get_width() > 300:
+            scale_factor = 300 / pixbuf.get_width()
+            new_width = 300
+            new_height = int(pixbuf.get_height() * scale_factor)
+            pixbuf = pixbuf.scale_simple(new_width, new_height, 
+                                       GdkPixbuf.InterpType.BILINEAR)
+        
+        # Cache and return
+        self._preview_cache[image_data] = pixbuf
+        return pixbuf
+
+    def clear_cache(self):
+        """Clear image preview cache when memory usage is high"""
+        if len(self._preview_cache) > 50:  # Arbitrary limit
+            self._preview_cache.clear()
+
     def on_item_clicked(self, listbox, row):
         if row and hasattr(row, 'item'):
             item = row.item
